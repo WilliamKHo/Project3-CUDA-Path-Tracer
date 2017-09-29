@@ -2,6 +2,10 @@
 
 #include "intersections.h"
 
+#define CUDART_PI_F 3.141592654f
+#define SUBSURFACE_DISK_RADIUS 0.5f
+
+
 // CHECKITOUT
 /**
  * Computes a cosine-weighted random direction in a hemisphere.
@@ -72,13 +76,18 @@ void scatterRay(
         glm::vec3 intersect,
         glm::vec3 normal,
         const Material &m,
-        thrust::default_random_engine &rng) {
+        thrust::default_random_engine &rng,
+	    float processSubsurface) {
     // TODO: implement this.
     // A basic implementation of pure-diffuse shading will just call the
     // calculateRandomDirectionInHemisphere defined above.
 	thrust::uniform_real_distribution<float> u01(0, 1);
 	float probability = (m.hasReflective > 0) ? u01(rng) : 1.0f;
 	Ray& ray = pathSegment.ray;
+	if (processSubsurface > 0.0f) {
+		ray.direction = glm::normalize(calculateRandomDirectionInHemisphere(normal, rng));
+		ray.origin = 0.05f * ray.direction + intersect;
+	}
 	if (m.hasRefractive > 0) {
 		float cosTheta = glm::dot(glm::normalize(-pathSegment.ray.direction), normal);
 		float fresnelCoeff = ((1.0f - m.indexOfRefraction) / (1.0f + m.indexOfRefraction)) * ((1.0f - m.indexOfRefraction) / (1.0f + m.indexOfRefraction));
@@ -119,6 +128,25 @@ void scatterRay(
 			pathSegment.ray.direction = glm::refract(pathSegment.ray.direction, realNormal, eta);
 		}*/
 		//printf("REFRACTIVE\n");
+	}
+	else if (m.hasSubsurface > 0){
+		thrust::uniform_real_distribution<float> u01(0, 1);
+		thrust::uniform_real_distribution<float> v01(0, 1);
+
+		//use u and v along with the lensradius to determine a new segment origin
+		float radius = SUBSURFACE_DISK_RADIUS * u01(rng);
+		float theta = CUDART_PI_F * 2.0f * v01(rng);
+
+		float x = radius * cosf(theta);
+		float y = radius * sinf(theta);
+
+		glm::vec3 localX = glm::normalize(glm::cross(ray.direction, normal));
+		glm::vec3 localY = glm::normalize(glm::cross(localX, normal));
+
+		ray.origin = intersect + x * localX + y * localY + 0.2f * normal;
+		ray.direction = -normal;
+		pathSegment.color *= m.color * (SUBSURFACE_DISK_RADIUS - radius) / SUBSURFACE_DISK_RADIUS;
+		return;
 	}
 	else {
 		if (probability > 0.5f) {

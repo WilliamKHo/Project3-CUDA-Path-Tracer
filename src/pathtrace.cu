@@ -18,8 +18,9 @@
 
 #define ERRORCHECK 1
 #define FIRSTBOUNCE 0
-#define SORTBYMATERIAL 0
-#define DEPTHOFFIELD 1
+#define SORTBYMATERIAL 1
+#define DEPTHOFFIELD 0
+#define SUBSURFACE 1
 
 #define CUDART_PI_F 3.141592654f
 
@@ -360,7 +361,8 @@ __global__ void pathTraceBasic(int iter, int num_paths,
 					pathSegment.ray.origin + pathSegment.ray.direction * intersection.t,
 					intersection.surfaceNormal,
 					material,
-					rng);
+					rng,
+					-1.0f);
 				pathSegment.remainingBounces--;
 			}
 			// If there was no intersection, color the ray black.
@@ -416,6 +418,75 @@ __global__ void populateMaterialIds(int numPaths, int * materialIds, ShadeableIn
 
 }
 
+__global__ void processSubsurfaceIntersections(
+	int depth
+	, int num_paths
+	, PathSegment * pathSegments
+	, Geom * geoms
+	, int geoms_size
+	, ShadeableIntersection * intersections
+	, Material * materials
+)
+{
+	int path_index = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (path_index < num_paths)
+	{
+		if (materials[path_index].hasSubsurface < 1.0f) {
+			return;
+		}
+		PathSegment& pathSegment = pathSegments[path_index];
+
+		float t;
+		glm::vec3 intersect_point;
+		glm::vec3 normal;
+		float t_min = FLT_MAX;
+		int hit_geom_index = -1;
+		bool outside = true;
+
+		glm::vec3 tmp_intersect;
+		glm::vec3 tmp_normal;
+
+		// naive parse through global geoms
+
+		for (int i = 0; i < geoms_size; i++)
+		{
+			Geom & geom = geoms[i];
+
+			if (geom.type == CUBE)
+			{
+				t = boxIntersectionTest(geom, pathSegment.ray, tmp_intersect, tmp_normal, pathSegment.outside);
+			}
+			else if (geom.type == SPHERE)
+			{
+				t = sphereIntersectionTest(geom, pathSegment.ray, tmp_intersect, tmp_normal, pathSegment.outside);
+			}
+			if (t > 0.0f && t_min > t)
+			{
+				t_min = t;
+				hit_geom_index = i;
+				intersect_point = tmp_intersect;
+				normal = tmp_normal;
+			}
+		}
+
+		if (hit_geom_index == -1)
+		{
+			intersections[path_index].t = -1.0f;
+		}
+		else
+		{
+			intersections[path_index].t = t_min;
+			intersections[path_index].materialId = geoms[hit_geom_index].materialid;
+			intersections[path_index].surfaceNormal = normal;
+		}
+
+		pathSegment.ray.origin = intersections[path_index].t * pathSegment.ray.direction + pathSegment.ray.origin;
+		scatterRay(pathSegment, intersections[path_index].t * pathSegment.ray.direction + pathSegment.ray.origin,
+			normal, materials[path_index], makeSeededRandomEngine(num_paths, path_index, 0), 1.0f);
+		
+	}
+}
 
 
 //kernel to scatter pathSegments based on scanned boolean array
@@ -565,6 +636,17 @@ void pathtrace(uchar4 *pbo, int frame, int iter) {
 
 	thrust::sort_by_key(dev_thrust_materialIds1, dev_thrust_materialIds1 + numPathsActive, dev_thrust_paths);
 	thrust::sort_by_key(dev_thrust_materialIds2, dev_thrust_materialIds2 + numPathsActive, dev_thrust_intersections);
+#endif
+
+#if SUBSURFACE
+	processSubsurfaceIntersections << <numblocksPathSegmentTracing, blockSize1d >> > (
+		depth
+		, numPathsActive
+		, dev_paths
+		, dev_geoms
+		, hst_scene->geoms.size()
+		, dev_intersections
+		, dev_materials);
 #endif
 
   pathTraceBasic<<<numblocksPathSegmentTracing, blockSize1d>>> (
