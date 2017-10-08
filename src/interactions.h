@@ -42,6 +42,32 @@ glm::vec3 calculateRandomDirectionInHemisphere(
 }
 
 /**
+* Computes a cosine-weighted random direction in a hemisphere.
+* Used for diffuse lighting.
+*/
+__host__ __device__
+glm::vec3 calculateRandomDirectionInSphere(
+	glm::vec3 normal, thrust::default_random_engine &rng) {
+	thrust::uniform_real_distribution<float> u01(0, 1);
+
+	float x = u01(rng) - 0.5f;
+	float y = u01(rng) - 0.5f;
+	float z = u01(rng) - 0.5f;
+
+	return glm::normalize(glm::vec3(x, y, z));
+
+}
+
+/**
+* Computes a cosine-weighted random direction in a hemisphere.
+* Used for diffuse lighting.
+*/
+__host__ __device__
+float sampleDistance(float scatteringCoefficient, thrust::default_random_engine &rng) {
+	thrust::uniform_real_distribution<float> u01(0, 1);
+	return -logf(u01(rng)) / scatteringCoefficient;
+}
+/**
  * Scatter a ray with some probabilities according to the material properties.
  * For example, a diffuse surface scatters in a cosine-weighted hemisphere.
  * A perfect specular surface scatters in the reflected ray direction.
@@ -91,6 +117,16 @@ void scatterRay(
 			ray.direction = glm::normalize(glm::refract(ray.direction, normal, eta));
 		}
 	}
+	/*else if (m.hasSubsurface) {
+		if (!pathSegment.outside) {
+			//sample the distance and test it against t
+			//if the distance is less than t calculate a random direction in a sphere and scatter the ray
+			//if the distance is greater than t than refract it out of the medium
+			//de-energize the ray based on the distance
+		}
+		float eta = pathSegment.outside ? 1.0f / m.indexOfRefraction : m.indexOfRefraction;
+		ray.direction = glm::normalize(glm::refract(ray.direction, normal, eta));
+	} */
 	else {
 		if (probability > 0.5f) {
 			ray.direction = glm::normalize(calculateRandomDirectionInHemisphere(normal, rng));

@@ -18,8 +18,8 @@
 #include "../stream_compaction/common.h"
 
 #define ERRORCHECK 1
-#define FIRSTBOUNCE 0
-#define SORTBYMATERIAL 1
+#define FIRSTBOUNCE 1
+#define SORTBYMATERIAL 0
 #define DEPTHOFFIELD 0
 #define DIRECTLIGHTING 0
 
