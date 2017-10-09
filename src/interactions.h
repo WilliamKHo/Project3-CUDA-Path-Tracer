@@ -46,8 +46,7 @@ glm::vec3 calculateRandomDirectionInHemisphere(
 * Used for diffuse lighting.
 */
 __host__ __device__
-glm::vec3 calculateRandomDirectionInSphere(
-	glm::vec3 normal, thrust::default_random_engine &rng) {
+glm::vec3 calculateRandomDirectionInSphere(thrust::default_random_engine &rng) {
 	thrust::uniform_real_distribution<float> u01(0, 1);
 
 	float x = u01(rng) - 0.5f;
@@ -65,7 +64,7 @@ glm::vec3 calculateRandomDirectionInSphere(
 __host__ __device__
 float sampleDistance(float scatteringCoefficient, thrust::default_random_engine &rng) {
 	thrust::uniform_real_distribution<float> u01(0, 1);
-	return -logf(u01(rng)) / scatteringCoefficient;
+	return std::min(1.5f, -logf(u01(rng)) / scatteringCoefficient);
 }
 /**
  * Scatter a ray with some probabilities according to the material properties.
@@ -105,7 +104,7 @@ void scatterRay(
 	thrust::uniform_real_distribution<float> u01(0, 1);
 	float probability = (m.hasReflective > 0) ? u01(rng) : 1.0f;
 	Ray& ray = pathSegment.ray;
-	if (m.hasRefractive > 0) {
+	if (m.hasRefractive > 0 && m.hasSubsurface < 1) {
 		float cosTheta = glm::dot(glm::normalize(-pathSegment.ray.direction), normal);
 		float fresnelCoeff = ((1.0f - m.indexOfRefraction) / (1.0f + m.indexOfRefraction)) * ((1.0f - m.indexOfRefraction) / (1.0f + m.indexOfRefraction));
 		fresnelCoeff = fresnelCoeff + (1.0f - fresnelCoeff) * powf(1.0f - cosTheta, 5.0f);
@@ -117,16 +116,30 @@ void scatterRay(
 			ray.direction = glm::normalize(glm::refract(ray.direction, normal, eta));
 		}
 	}
-	/*else if (m.hasSubsurface) {
+	else if (m.hasSubsurface > 0) {
 		if (!pathSegment.outside) {
 			//sample the distance and test it against t
+			float distance = 0.2f;//sampleDistance(m.scatteringCoefficient, rng);
+			float t = glm::length(ray.origin - intersect);
 			//if the distance is less than t calculate a random direction in a sphere and scatter the ray
-			//if the distance is greater than t than refract it out of the medium
-			//de-energize the ray based on the distance
+			if (distance < t) {
+				ray.direction = glm::normalize(calculateRandomDirectionInSphere(rng));
+				ray.origin = ray.origin + distance * ray.direction;
+				return;
+				//if the distance is greater than t than refract it out of the medium
+			}
+			else {
+				ray.direction = glm::normalize(glm::refract(ray.direction, normal, m.indexOfRefraction));
+				ray.origin = 0.05f * ray.direction + intersect;
+			}
+			float transmission = expf(-m.scatteringCoefficient * distance);
+			pathSegment.color *= m.color * transmission;
+			return;
+			
 		}
-		float eta = pathSegment.outside ? 1.0f / m.indexOfRefraction : m.indexOfRefraction;
-		ray.direction = glm::normalize(glm::refract(ray.direction, normal, eta));
-	} */
+		//refract inside
+		ray.direction = glm::normalize(glm::refract(ray.direction, normal, 1.0f / m.indexOfRefraction));
+	} 
 	else {
 		if (probability > 0.5f) {
 			ray.direction = glm::normalize(calculateRandomDirectionInHemisphere(normal, rng));
